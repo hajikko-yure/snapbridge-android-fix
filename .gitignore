@@ -1,0 +1,12 @@
+# Build and packaging artifacts
+*.apk
+*.idsig
+*.zip
+*.dex
+decoded/
+build/
+dist/
+to_sign/
+signed/
+.gradle/
+*.log
