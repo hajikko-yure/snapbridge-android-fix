@@ -1,15 +1,12 @@
 # snapbridge-android-fix
 
-Nikon SnapBridge アプリが **Android 17 (Preview / Beta) や最新の Android ランタイム環境で起動直後に強制終了する不具合** を修正したパッチおよびインストールツールキットです。
+Android 17などの新しいAndroid環境で、Nikon SnapBridgeが起動直後に強制終了する問題を修正するパッチとインストール手順です。
 
----
+## 発生する問題と原因
 
-## 📌 背景と問題の原因
+### エラー内容
+Android 17（Preview / Beta等）の端末でSnapBridgeを起動すると、Wi-Fi接続時や通信発生時に以下のスタックトレースを出力して強制終了します。
 
-### 発生する症状
-* Android 17 / 最新OS搭載端末（Pixel 7a 等）で Nikon SnapBridge を起動すると、数秒後（特にWi-Fi接続時や通信発生時）にアプリがクラッシュ・強制終了する。
-
-### 原因解析 (logcat)
 ```text
 FATAL EXCEPTION: Thread-xxx
 Process: com.nikon.snapbridge.cmru
@@ -19,24 +16,21 @@ java.lang.StackOverflowError: stack size 1036KB
 	at com.nikon.snapbridge.cmru.webclient.commons.WebApiParameter.objectAna(...)
 	at com.nikon.snapbridge.cmru.webclient.commons.WebApiParameter.getFieldString(...)
 	at com.nikon.snapbridge.cmru.webclient.commons.WebApiParameter.objectAna(...)
-	... (上記2行が数百回再帰呼び出しされてスタックオーバーフロー)
+	...
 	at com.nikon.snapbridge.cmru.webclient.commons.WebApiParameter.toDumpString(...)
 	at com.nikon.snapbridge.cmru.webclient.commons.WebApiRequest.toDumpString(...)
 	at com.nikon.snapbridge.cmru.webclient.nms.apis.NmsFirmwareInformationApi.getLatestFirmwareInformation(...)
 ```
 
-* **根本原因**:
-  * アプリ起動時にファームウェア確認通信（`NmsFirmwareInformationApi.getLatestFirmwareInformation`）を行う際、リクエスト内容のデバッグ用文字列化（`toDumpString`）でリフレクションを用いてパラメータオブジェクトを走査（`objectAna` ↔ `getFieldString`）しています。
-  * 最新の Android ランタイムや内部クラス構造の変化により、走査の終了判定を満たせず無限再帰が発生し、Android のコールスタック上限（1036KB）を食いつぶして `StackOverflowError` で即死していました。
+### 原因
+アプリ起動時にサーバーへファームウェア情報を問い合わせる際、ログ用の文字列生成処理（`toDumpString`）が内部オブジェクトをリフレクションで再帰的に解析しています。
+新しいAndroid環境ではランタイム内部の構造変化により終了条件が満たされず、無限再帰となってスタック領域（1036KB）を使い果たしていました。
 
----
+## 修正内容
 
-## 🛠️ パッチ内容
-
-デバッグダンプ用メソッド `com.nikon.snapbridge.cmru.webclient.commons.WebApiParameter.toDumpString()` を修正し、リフレクション走査を行わずに即座に空文字（`""`）を返却するように変更しました。
+`com.nikon.snapbridge.cmru.webclient.commons.WebApiParameter` の `toDumpString()` を書き換え、リフレクション解析を行わずに空文字列を返すように変更しました。
 
 ```smali
-# 修正後: smali
 .method public toDumpString()Ljava/lang/String;
     .locals 1
 
@@ -46,44 +40,37 @@ java.lang.StackOverflowError: stack size 1036KB
 .end method
 ```
 
-通信リクエスト自体のペイロード生成（`toMap()`）や通信処理本体には一切影響を与えず、デバッグログ生成時の無限再帰のみを完全に防ぎます。
+実際の通信処理（`toMap()`）やリクエスト送信には影響せず、ログ生成時のクラッシュだけを防ぎます。
 
----
+## インストール手順
 
-## 🚀 インストール手順
+### 1. 配布ファイルのダウンロード
+Releasesページから `snapbridge-v2.14.3-patched.zip` をダウンロードし、展開します。
 
-### 1. リリースからダウンロード
-1. [Releases](../../releases) から最新の `snapbridge-v2.14.3-patched.zip` をダウンロードして解凍します。
+### 2. 既存アプリのアンインストール
+再署名したAPKを使用するため、公式版への上書きはできません。先にアンインストールします。
 
-### 2. 既存公式アプリのアンインストール
-再署名済みAPKとなるため、公式版の上書きインストールはできません。事前にアンインストールしてください。
 ```bash
 adb uninstall com.nikon.snapbridge.cmru
 ```
 
 ### 3. パッチ版のインストール
-同梱されている `install.bat`（Windows）または `install.ps1` を実行するか、adbコマンドでインストールします。
+展開したフォルダ内にある `install.bat`（Windows）または `install.ps1` を実行するか、以下のコマンドを実行します。
+
 ```bash
 adb install-multiple base-aligned-debugSigned.apk split_config.arm64_v8a-aligned-debugSigned.apk split_config.ja-aligned-debugSigned.apk split_config.xxhdpi-aligned-debugSigned.apk split_shooting_tips-aligned-debugSigned.apk
 ```
 
----
+## 動作確認
 
-## 📷 カメラ（COOLPIX W100 等）での利用
+COOLPIX W100などの対応カメラにおいて、端末のWi-Fiを常時オンにしたままでも以下の機能が正常に動作することを確認しています。
 
-パッチ適用後は、Wi-Fi常時接続環境でもクラッシュすることなく通常通り動作します。
-* **Bluetooth常時接続**: スマホの位置情報（GPS）が自動でカメラ内の写真Exifに付与されます。
-* **Wi-Fiリモート撮影**: アプリから「リモート撮影」をタップすると、カメラの専用Wi-Fiに自動接続されてライブビュー撮影が行えます。
+* **Bluetooth常時接続**: スマートフォンのGPS位置情報をカメラへ同期
+* **リモート撮影**: カメラのWi-Fiへ切り替えてのライブビュー表示およびシャッター操作
 
----
+## ファイル構成
 
-## 📂 リポジトリ構成
-
-```text
-├── README.md               # ドキュメント
-├── .gitignore              # Git除外設定
-└── scripts/
-    ├── apply_patch.py      # smaliパッチ適用スクリプト
-    ├── install.bat         # Windows用 adb一括インストールバッチ
-    └── install.ps1         # PowerShell用 adb一括インストールスクリプト
-```
+* `README.md`: 本ドキュメント
+* `scripts/apply_patch.py`: smaliファイルを修正するスクリプト
+* `scripts/install.bat`: Windows用インストールスクリプト
+* `scripts/install.ps1`: PowerShell用インストールスクリプト

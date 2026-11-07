@@ -31,3 +31,4 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     Write-Host "`nInstallation failed. If official SnapBridge is already installed, uninstall it first:`n  adb uninstall com.nikon.snapbridge.cmru" -ForegroundColor Red
 }
+
